@@ -1,7 +1,8 @@
 #!/bin/bash
 # ==========================================
-#  Pterodactyl Panel Auto Installer (No Database)
-#  Simplified by ChatGPT — install without MariaDB
+#  Pterodactyl Panel Auto Installer (SQLite Version - No MySQL)
+#  Simplified & Fixed by ChatGPT (GPT-5)
+#  Compatible with Ubuntu 20.04 / 22.04
 # ==========================================
 
 set -e
@@ -23,10 +24,10 @@ apt install -y curl sudo zip unzip git lsb-release software-properties-common ap
 apt install -y redis-server
 systemctl enable redis-server --now
 
-# --------- Install PHP 8.2 ---------
+# --------- Install PHP 8.2 & Nginx ---------
 LC_ALL=C.UTF-8 add-apt-repository -y ppa:ondrej/php
 apt update -y
-apt install -y php8.2 php8.2-{cli,gd,mbstring,bcmath,xml,curl,zip,common,pgsql,sqlite3,intl,fpm} nginx composer
+apt install -y php8.2 php8.2-{cli,gd,sqlite3,mbstring,bcmath,xml,curl,zip,common,intl,fpm} nginx composer
 
 # --------- Install Panel ---------
 mkdir -p /var/www/pterodactyl
@@ -39,24 +40,40 @@ cp .env.example .env
 # --------- Install Dependencies ---------
 composer install --no-dev --optimize-autoloader
 
-# --------- Setup Environment ---------
+# --------- Konfigurasi Environment ---------
 php artisan key:generate --force
+
+# Setup panel environment tanpa database eksternal (pakai SQLite)
 php artisan p:environment:setup -n \
-    --url="https://${PANEL_DOMAIN}" \
-    --timezone="Asia/Jakarta" \
-    --cache="redis" \
-    --session="redis" \
-    --queue="redis" \
-    --email="${ADMIN_EMAIL}"
+  --url="https://${PANEL_DOMAIN}" \
+  --timezone="Asia/Jakarta" \
+  --cache="redis" \
+  --session="redis" \
+  --queue="redis"
 
-# --------- Skip database setup ---------
-# php artisan p:environment:database (DISABLED)
-# php artisan migrate --seed --force (DISABLED)
+# Ganti konfigurasi database ke SQLite
+sed -i "s/DB_CONNECTION=.*/DB_CONNECTION=sqlite/" .env
+sed -i "s/DB_HOST=.*/#DB_HOST=127.0.0.1/" .env
+sed -i "s/DB_PORT=.*/#DB_PORT=3306/" .env
+sed -i "s/DB_DATABASE=.*/DB_DATABASE=database\/database.sqlite/" .env
+sed -i "s/DB_USERNAME=.*/#DB_USERNAME=root/" .env
+sed -i "s/DB_PASSWORD=.*/#DB_PASSWORD=/" .env
 
-# --------- Buat akun admin dummy (tanpa koneksi DB) ---------
-echo ""
-echo "⚠️ Database dilewati, akun admin belum dibuat otomatis."
-echo "   Kamu bisa membuat akun admin nanti setelah database dikonfigurasi."
+# Buat file SQLite
+touch database/database.sqlite
+chmod 664 database/database.sqlite
+
+# Migrasi dan seed database
+php artisan migrate --seed --force
+
+# --------- Buat akun admin ---------
+php artisan p:user:make \
+  --email="${ADMIN_EMAIL}" \
+  --username="${ADMIN_USERNAME}" \
+  --name-first="Admin" \
+  --name-last="Panel" \
+  --password="${ADMIN_PASSWORD}" \
+  --admin=1
 
 # --------- Konfigurasi Nginx ---------
 rm -f /etc/nginx/sites-enabled/default
@@ -80,9 +97,9 @@ server {
         fastcgi_pass unix:/run/php/php8.2-fpm.sock;
         fastcgi_index index.php;
         include fastcgi_params;
-        fastcgi_param PHP_VALUE "upload_max_filesize = 100M \n post_max_size=100M";
         fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
         fastcgi_param PATH_INFO \$fastcgi_path_info;
+        fastcgi_param PHP_VALUE "upload_max_filesize = 100M \n post_max_size=100M";
     }
 
     location ~ /\.ht {
@@ -99,22 +116,18 @@ systemctl enable nginx php8.2-fpm
 apt install -y certbot python3-certbot-nginx
 certbot --nginx -d ${PANEL_DOMAIN} --non-interactive --agree-tos -m ${ADMIN_EMAIL} --redirect || true
 
-# --------- Output ---------
+# --------- Tampilkan hasil ---------
 clear
 echo "==========================================="
-echo "✅ Pterodactyl Panel berhasil diinstal (tanpa database)!"
+echo "✅ Pterodactyl Panel berhasil diinstal!"
 echo "-------------------------------------------"
 echo "🌐 URL Panel  : https://${PANEL_DOMAIN}"
 echo "👤 Username   : ${ADMIN_USERNAME}"
 echo "📧 Email      : ${ADMIN_EMAIL}"
 echo "🔑 Password   : ${ADMIN_PASSWORD}"
 echo "-------------------------------------------"
-echo "⚠️ Catatan penting:"
-echo "   - Database tidak dikonfigurasi."
-echo "   - Jalankan nanti setelah database siap:"
-echo "       php artisan p:environment:database"
-echo "       php artisan migrate --seed --force"
-echo "       php artisan p:user:make --email='${ADMIN_EMAIL}' --username='${ADMIN_USERNAME}' --name-first='Admin' --name-last='Panel' --password='${ADMIN_PASSWORD}' --admin=1"
+echo "🗂 Menggunakan Database SQLite (tanpa MariaDB)"
+echo "📍 File DB: /var/www/pterodactyl/database/database.sqlite"
 echo "-------------------------------------------"
-echo "📌 Akses sekarang di: https://${PANEL_DOMAIN}"
+echo "📌 Login sekarang di: https://${PANEL_DOMAIN}"
 echo "==========================================="
