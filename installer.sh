@@ -1,8 +1,8 @@
 #!/bin/bash
 # ==========================================
-#  Pterodactyl Panel Auto Installer (SQLite Version - No MySQL)
-#  Simplified & Fixed by ChatGPT (GPT-5)
-#  Compatible with Ubuntu 20.04 / 22.04
+#  Pterodactyl Panel Auto Installer (SQLite Version - Fixed)
+#  No MariaDB, No "--email" Error
+#  Tested: Ubuntu 20.04 / 22.04
 # ==========================================
 
 set -e
@@ -43,7 +43,7 @@ composer install --no-dev --optimize-autoloader
 # --------- Konfigurasi Environment ---------
 php artisan key:generate --force
 
-# Setup panel environment tanpa database eksternal (pakai SQLite)
+# Setup panel environment (tanpa MySQL)
 php artisan p:environment:setup -n \
   --url="https://${PANEL_DOMAIN}" \
   --timezone="Asia/Jakarta" \
@@ -51,7 +51,7 @@ php artisan p:environment:setup -n \
   --session="redis" \
   --queue="redis"
 
-# Ganti konfigurasi database ke SQLite
+# Gunakan SQLite sebagai database
 sed -i "s/DB_CONNECTION=.*/DB_CONNECTION=sqlite/" .env
 sed -i "s/DB_HOST=.*/#DB_HOST=127.0.0.1/" .env
 sed -i "s/DB_PORT=.*/#DB_PORT=3306/" .env
@@ -63,17 +63,23 @@ sed -i "s/DB_PASSWORD=.*/#DB_PASSWORD=/" .env
 touch database/database.sqlite
 chmod 664 database/database.sqlite
 
-# Migrasi dan seed database
+# Migrasi & Seed Database
 php artisan migrate --seed --force
 
-# --------- Buat akun admin ---------
-php artisan p:user:make \
-  --email="${ADMIN_EMAIL}" \
-  --username="${ADMIN_USERNAME}" \
-  --name-first="Admin" \
-  --name-last="Panel" \
-  --password="${ADMIN_PASSWORD}" \
-  --admin=1
+# --------- Buat akun admin manual (tanpa flag "--email") ---------
+php artisan tinker --execute="
+use Pterodactyl\Models\User;
+use Illuminate\Support\Facades\Hash;
+User::create([
+    'uuid' => (string) Str::uuid(),
+    'email' => '${ADMIN_EMAIL}',
+    'username' => '${ADMIN_USERNAME}',
+    'name_first' => 'Admin',
+    'name_last' => 'Panel',
+    'password' => Hash::make('${ADMIN_PASSWORD}'),
+    'root_admin' => true,
+]);
+"
 
 # --------- Konfigurasi Nginx ---------
 rm -f /etc/nginx/sites-enabled/default
