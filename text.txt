@@ -1,1 +1,0 @@
-saya ingin codingan tersebut hanya untuk install panel yaitu pada menu 0 pada awal menjalankan akan dimintakan semua perintah dari username, password, email dll sehingga pada pertengahan tidak ada diminta lagi dan tidak ada konfirmasi y/n (semua yang ada konfirmasi di yes/aggre) agar mempermudah user saat melakukan instalasi panel
