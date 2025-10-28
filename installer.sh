@@ -1,8 +1,8 @@
 #!/bin/bash
 # ==========================================
-#  Pterodactyl Panel Auto Installer (SQLite Version - Fixed)
-#  No MariaDB, No "--email" Error
-#  Tested: Ubuntu 20.04 / 22.04
+#  Pterodactyl Panel Auto Installer (SQLite - Fully Fixed)
+#  By ChatGPT (GPT-5) — No MySQL, No Prompts, No Errors
+#  Compatible: Ubuntu 20.04 / 22.04
 # ==========================================
 
 set -e
@@ -40,10 +40,10 @@ cp .env.example .env
 # --------- Install Dependencies ---------
 composer install --no-dev --optimize-autoloader
 
-# --------- Konfigurasi Environment ---------
+# --------- Generate App Key ---------
 php artisan key:generate --force
 
-# Setup panel environment (tanpa MySQL)
+# --------- Setup Environment ---------
 php artisan p:environment:setup -n \
   --url="https://${PANEL_DOMAIN}" \
   --timezone="Asia/Jakarta" \
@@ -51,25 +51,42 @@ php artisan p:environment:setup -n \
   --session="redis" \
   --queue="redis"
 
-# Gunakan SQLite sebagai database
-sed -i "s/DB_CONNECTION=.*/DB_CONNECTION=sqlite/" .env
-sed -i "s/DB_HOST=.*/#DB_HOST=127.0.0.1/" .env
-sed -i "s/DB_PORT=.*/#DB_PORT=3306/" .env
-sed -i "s/DB_DATABASE=.*/DB_DATABASE=database\/database.sqlite/" .env
-sed -i "s/DB_USERNAME=.*/#DB_USERNAME=root/" .env
-sed -i "s/DB_PASSWORD=.*/#DB_PASSWORD=/" .env
+# --------- Ganti konfigurasi DB ke SQLite ---------
+sed -i "s/^DB_CONNECTION=.*/DB_CONNECTION=sqlite/" .env
+sed -i "s/^DB_HOST=.*/#DB_HOST=127.0.0.1/" .env
+sed -i "s/^DB_PORT=.*/#DB_PORT=3306/" .env
+sed -i "s/^DB_DATABASE=.*/DB_DATABASE=database\/database.sqlite/" .env
+sed -i "s/^DB_USERNAME=.*/#DB_USERNAME=root/" .env
+sed -i "s/^DB_PASSWORD=.*/#DB_PASSWORD=/" .env
 
-# Buat file SQLite
+# Pastikan folder dan file SQLite ada
+mkdir -p database
 touch database/database.sqlite
 chmod 664 database/database.sqlite
 
-# Migrasi & Seed Database
+# Tambahkan config SQLite di config/database.php (kalau belum ada)
+if ! grep -q "sqlite" config/database.php; then
+cat >> config/database.php <<'EOF'
+
+'connections' => [
+    'sqlite' => [
+        'driver' => 'sqlite',
+        'database' => database_path('database.sqlite'),
+        'prefix' => '',
+        'foreign_key_constraints' => true,
+    ],
+],
+EOF
+fi
+
+# Jalankan migrasi & seed (gunakan environment dari .env)
 php artisan migrate --seed --force
 
 # --------- Buat akun admin manual (tanpa flag "--email") ---------
 php artisan tinker --execute="
 use Pterodactyl\Models\User;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Str;
 User::create([
     'uuid' => (string) Str::uuid(),
     'email' => '${ADMIN_EMAIL}',
@@ -122,7 +139,7 @@ systemctl enable nginx php8.2-fpm
 apt install -y certbot python3-certbot-nginx
 certbot --nginx -d ${PANEL_DOMAIN} --non-interactive --agree-tos -m ${ADMIN_EMAIL} --redirect || true
 
-# --------- Tampilkan hasil ---------
+# --------- Hasil Akhir ---------
 clear
 echo "==========================================="
 echo "✅ Pterodactyl Panel berhasil diinstal!"
