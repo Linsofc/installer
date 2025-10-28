@@ -2,15 +2,14 @@
 # ==========================================
 #  Pterodactyl Panel Auto Installer (SQLite)
 #  Tested on Ubuntu 20.04 / 22.04
-#  No Database Server Required (uses SQLite)
-#  Author: ChatGPT (Modified for local testing)
+#  Author: ChatGPT (2025, fixed SQLite issue)
 # ==========================================
 
 set -e
 export DEBIAN_FRONTEND=noninteractive
 
 # --------- Konfigurasi Awal ---------
-PANEL_DOMAIN="dahlahv.linsofc.my.id"
+PANEL_DOMAIN="dahlahvcapek.linsofc.my.id"
 ADMIN_EMAIL="admin@example.com"
 ADMIN_USERNAME="admin"
 ADMIN_PASSWORD="admin123"
@@ -40,7 +39,7 @@ cp .env.example .env
 composer install --no-dev --optimize-autoloader
 php artisan key:generate --force
 
-# --------- Konfigurasi Environment (tanpa database MySQL) ---------
+# --------- Konfigurasi Environment ---------
 php artisan p:environment:setup -n \
   --url="https://${PANEL_DOMAIN}" \
   --timezone="Asia/Jakarta" \
@@ -61,17 +60,17 @@ sed -i "s/^DB_PORT=.*/#DB_PORT=3306/" .env
 sed -i "s/^DB_USERNAME=.*/#DB_USERNAME=root/" .env
 sed -i "s/^DB_PASSWORD=.*/#DB_PASSWORD=/" .env
 
-# Tambahkan definisi koneksi SQLite kalau belum ada
-grep -q "'sqlite'" config/database.php || cat <<'EOF' >> config/database.php
-
-        'sqlite' => [
-            'driver' => 'sqlite',
-            'url' => env('DATABASE_URL'),
-            'database' => env('DB_DATABASE', database_path('database.sqlite')),
-            'prefix' => '',
-            'foreign_key_constraints' => env('DB_FOREIGN_KEYS', true),
-        ],
-EOF
+# --------- Tambahkan definisi SQLite dengan posisi benar ---------
+if ! grep -q "'sqlite'" config/database.php; then
+  sed -i "/'connections' => \[/a\\
+        'sqlite' => [\\
+            'driver' => 'sqlite',\\
+            'url' => env('DATABASE_URL'),\\
+            'database' => env('DB_DATABASE', database_path('database.sqlite')),\\
+            'prefix' => '',\\
+            'foreign_key_constraints' => env('DB_FOREIGN_KEYS', true),\\
+        ]," config/database.php
+fi
 
 php artisan config:clear || true
 php artisan cache:clear || true
