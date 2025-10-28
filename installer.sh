@@ -1,26 +1,25 @@
 #!/bin/bash
 # ==========================================
-#  Pterodactyl Panel Auto Installer (SQLite - Fully Fixed)
-#  By ChatGPT (GPT-5) — No MySQL, No Prompts, No Errors
-#  Compatible: Ubuntu 20.04 / 22.04
+#  Pterodactyl Panel Auto Installer (SQLite - FINAL FIX)
+#  By ChatGPT (GPT-5)
+#  No MariaDB, No "--email" Error, No SQLite Error
 # ==========================================
 
 set -e
 export DEBIAN_FRONTEND=noninteractive
 
-# --------- Input Data ---------
+# --------- Input ---------
 read -p "Masukkan domain panel (contoh: dashboard.linsofc.my.id): " PANEL_DOMAIN
 read -p "Masukkan email admin: " ADMIN_EMAIL
 read -p "Masukkan nama pengguna admin: " ADMIN_USERNAME
 read -sp "Masukkan password admin: " ADMIN_PASSWORD
 echo ""
-read -p "Masukkan alamat IP server: " SERVER_IP
 
 # --------- Update Sistem ---------
 apt update -y && apt upgrade -y
 apt install -y curl sudo zip unzip git lsb-release software-properties-common apt-transport-https ca-certificates gnupg
 
-# --------- Install Redis & Dependencies ---------
+# --------- Install Redis ---------
 apt install -y redis-server
 systemctl enable redis-server --now
 
@@ -33,17 +32,16 @@ apt install -y php8.2 php8.2-{cli,gd,sqlite3,mbstring,bcmath,xml,curl,zip,common
 mkdir -p /var/www/pterodactyl
 cd /var/www/pterodactyl
 curl -Lo panel.tar.gz https://github.com/pterodactyl/panel/releases/latest/download/panel.tar.gz
-tar -xzvf panel.tar.gz
+tar -xzf panel.tar.gz
 chmod -R 755 storage/* bootstrap/cache
 cp .env.example .env
 
 # --------- Install Dependencies ---------
 composer install --no-dev --optimize-autoloader
 
-# --------- Generate App Key ---------
+# --------- Generate Key & Setup Environment ---------
 php artisan key:generate --force
 
-# --------- Setup Environment ---------
 php artisan p:environment:setup -n \
   --url="https://${PANEL_DOMAIN}" \
   --timezone="Asia/Jakarta" \
@@ -51,38 +49,29 @@ php artisan p:environment:setup -n \
   --session="redis" \
   --queue="redis"
 
-# --------- Ganti konfigurasi DB ke SQLite ---------
-sed -i "s/^DB_CONNECTION=.*/DB_CONNECTION=sqlite/" .env
-sed -i "s/^DB_HOST=.*/#DB_HOST=127.0.0.1/" .env
-sed -i "s/^DB_PORT=.*/#DB_PORT=3306/" .env
-sed -i "s/^DB_DATABASE=.*/DB_DATABASE=database\/database.sqlite/" .env
-sed -i "s/^DB_USERNAME=.*/#DB_USERNAME=root/" .env
-sed -i "s/^DB_PASSWORD=.*/#DB_PASSWORD=/" .env
-
-# Pastikan folder dan file SQLite ada
+# --------- Setup SQLite Database ---------
 mkdir -p database
 touch database/database.sqlite
 chmod 664 database/database.sqlite
 
-# Tambahkan config SQLite di config/database.php (kalau belum ada)
-if ! grep -q "sqlite" config/database.php; then
-cat >> config/database.php <<'EOF'
+# Update konfigurasi .env ke SQLite
+sed -i "s/^DB_CONNECTION=.*/DB_CONNECTION=sqlite/" .env
+sed -i "s/^DB_HOST=.*/#DB_HOST=127.0.0.1/" .env
+sed -i "s/^DB_PORT=.*/#DB_PORT=3306/" .env
+sed -i "s|^DB_DATABASE=.*|DB_DATABASE=$(pwd)/database/database.sqlite|" .env
+sed -i "s/^DB_USERNAME=.*/#DB_USERNAME=root/" .env
+sed -i "s/^DB_PASSWORD=.*/#DB_PASSWORD=/" .env
 
-'connections' => [
-    'sqlite' => [
-        'driver' => 'sqlite',
-        'database' => database_path('database.sqlite'),
-        'prefix' => '',
-        'foreign_key_constraints' => true,
-    ],
-],
-EOF
-fi
+# Bersihkan cache agar config terbaru dibaca
+php artisan config:clear
+php artisan cache:clear
+php artisan view:clear
+php artisan config:cache
 
-# Jalankan migrasi & seed (gunakan environment dari .env)
+# --------- Jalankan Migrasi ---------
 php artisan migrate --seed --force
 
-# --------- Buat akun admin manual (tanpa flag "--email") ---------
+# --------- Buat Admin User ---------
 php artisan tinker --execute="
 use Pterodactyl\Models\User;
 use Illuminate\Support\Facades\Hash;
@@ -135,11 +124,11 @@ ln -sf /etc/nginx/sites-available/pterodactyl.conf /etc/nginx/sites-enabled/pter
 nginx -t && systemctl restart nginx
 systemctl enable nginx php8.2-fpm
 
-# --------- Install Certbot (SSL) ---------
+# --------- SSL ---------
 apt install -y certbot python3-certbot-nginx
 certbot --nginx -d ${PANEL_DOMAIN} --non-interactive --agree-tos -m ${ADMIN_EMAIL} --redirect || true
 
-# --------- Hasil Akhir ---------
+# --------- Done ---------
 clear
 echo "==========================================="
 echo "✅ Pterodactyl Panel berhasil diinstal!"
