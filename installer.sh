@@ -1,143 +1,121 @@
 #!/bin/bash
 # ==========================================
-#  Pterodactyl Full Auto Installer (Stable)
-#  Modified & Improved by ChatGPT (Saiful Edition)
-#  Supports Ubuntu 20.04 / 22.04 / Debian 12
+#  Pterodactyl Panel Auto Installer (Non-interactive)
+#  Author: ChatGPT Modified Version (Based on Vilhelm Prytz)
+#  For: Ubuntu/Debian systems
 # ==========================================
 
 set -e
 export DEBIAN_FRONTEND=noninteractive
 
-echo "=== PTERODACTYL AUTO INSTALLER ==="
-read -p "Masukkan domain panel (contoh: dashboard.linsofc.my.id): " PANEL_DOMAIN
-read -p "Masukkan email admin panel: " ADMIN_EMAIL
-read -p "Masukkan username admin: " ADMIN_USER
-read -sp "Masukkan password admin: " ADMIN_PASS; echo
-read -sp "Masukkan password database (MySQL root): " MYSQL_ROOT_PASS; echo
-read -p "Masukkan timezone (contoh: Asia/Jakarta): " TIMEZONE
-TIMEZONE=${TIMEZONE:-Asia/Jakarta}
+# ---------------- CONFIGURABLE VARIABLES ---------------- #
+# Edit sesuai kebutuhan kamu
+PANEL_DOMAIN="coba.linsofc.my.id"
+EMAIL="admin@$PANEL_DOMAIN"
+DB_ROOT_PASS="rootpassword123"
+DB_NAME="panel"
+DB_USER="pterodactyl"
+DB_PASS="pteropass123"
+TIMEZONE="Asia/Jakarta"
 
-echo ""
-echo "=== Mulai instalasi otomatis Pterodactyl Panel ==="
-sleep 2
+# -------------------------------------------------------- #
+LOG_PATH="/var/log/pterodactyl-auto-install.log"
+GITHUB_BASE_URL="https://raw.githubusercontent.com/pterodactyl-installer/pterodactyl-installer"
+GITHUB_SOURCE="master"
 
-# ---------- UPDATE SISTEM ----------
-apt update -y && apt upgrade -y
+echo "* Starting full automatic Pterodactyl Panel installation..."
+echo "* Log file: $LOG_PATH"
+echo "" > $LOG_PATH
 
-# ---------- INSTAL DEPENDENSI ----------
-apt install -y curl wget sudo unzip zip git gnupg software-properties-common ca-certificates apt-transport-https lsb-release dirmngr
+# ---------- Basic Requirements ---------- #
+echo "* Installing dependencies..."
+apt update -y >> $LOG_PATH 2>&1
+apt install -y curl sudo zip unzip tar git gnupg mysql-server mariadb-client nginx certbot python3-certbot-nginx php php8.1 php8.1-{cli,common,gd,xml,mbstring,mysql,pgsql,tokenizer,bcmath,curl,zip,intl,fpm,sqlite3,redis,imagick} redis-server >> $LOG_PATH 2>&1
 
-# ---------- INSTALL NGINX, MARIADB, PHP ----------
-apt install -y nginx mariadb-server mariadb-client
-systemctl enable --now mariadb
-systemctl enable --now nginx
+# ---------- Configure MariaDB ---------- #
+echo "* Configuring MariaDB..."
+systemctl enable mariadb --now
+mysql -u root -e "ALTER USER 'root'@'localhost' IDENTIFIED BY '$DB_ROOT_PASS'; FLUSH PRIVILEGES;" || true
+mysql -u root -p"$DB_ROOT_PASS" -e "CREATE DATABASE IF NOT EXISTS $DB_NAME;"
+mysql -u root -p"$DB_ROOT_PASS" -e "CREATE USER IF NOT EXISTS '$DB_USER'@'127.0.0.1' IDENTIFIED BY '$DB_PASS';"
+mysql -u root -p"$DB_ROOT_PASS" -e "GRANT ALL PRIVILEGES ON $DB_NAME.* TO '$DB_USER'@'127.0.0.1' WITH GRANT OPTION;"
+mysql -u root -p"$DB_ROOT_PASS" -e "FLUSH PRIVILEGES;"
 
-echo "Mengatur password root MariaDB..."
-mysql -u root <<MYSQL_SCRIPT
-ALTER USER 'root'@'localhost' IDENTIFIED BY '${MYSQL_ROOT_PASS}';
-FLUSH PRIVILEGES;
-MYSQL_SCRIPT
-
-# ---------- INSTALL PHP 8.2 ----------
-LC_ALL=C.UTF-8 add-apt-repository -y ppa:ondrej/php
-apt update -y
-apt install -y php8.2 php8.2-{cli,gd,mysql,mbstring,xml,bcmath,zip,curl,pgsql,intl,fpm}
-
-# ---------- DOWNLOAD PANEL ----------
-cd /var/www/
-echo "Mengunduh Pterodactyl Panel..."
-rm -rf /var/www/pterodactyl
+# ---------- Download Panel ---------- #
+echo "* Downloading Pterodactyl Panel..."
 mkdir -p /var/www/pterodactyl
-curl -Lo panel.tar.gz https://github.com/pterodactyl/panel/releases/latest/download/panel.tar.gz
-tar -xzvf panel.tar.gz -C /var/www/pterodactyl --strip-components=1
 cd /var/www/pterodactyl
+curl -Lo panel.tar.gz https://github.com/pterodactyl/panel/releases/latest/download/panel.tar.gz
+tar -xzvf panel.tar.gz >> $LOG_PATH 2>&1
+chmod -R 755 storage/* bootstrap/cache
 
-# ---------- CEK & PERBAIKI .env.example ----------
-if [ ! -f ".env.example" ]; then
-  echo "[FIX] File .env.example tidak ditemukan, mengunduh ulang..."
-  cd /var/www
-  rm -rf pterodactyl
-  mkdir -p pterodactyl
-  curl -Lo panel.tar.gz https://github.com/pterodactyl/panel/releases/latest/download/panel.tar.gz
-  tar -xzvf panel.tar.gz -C /var/www/pterodactyl --strip-components=1
-  cd /var/www/pterodactyl
-fi
-
-# ---------- INSTALL COMPOSER ----------
-curl -sS https://getcomposer.org/installer | php
-mv composer.phar /usr/local/bin/composer
-composer install --no-dev --optimize-autoloader
-
-# ---------- SETUP DATABASE PANEL ----------
-DB_PASS=$(openssl rand -hex 16)
-mysql -u root -p"${MYSQL_ROOT_PASS}" <<MYSQL_SCRIPT
-CREATE DATABASE panel;
-CREATE USER 'pterodactyl'@'127.0.0.1' IDENTIFIED BY '${DB_PASS}';
-GRANT ALL PRIVILEGES ON panel.* TO 'pterodactyl'@'127.0.0.1';
-FLUSH PRIVILEGES;
-MYSQL_SCRIPT
-
-# ---------- ENV SETUP ----------
+# ---------- Setup Environment ---------- #
+echo "* Setting up environment..."
 cp .env.example .env
 php artisan key:generate --force
 
-php artisan p:environment:setup \
-  --author="$ADMIN_EMAIL" \
-  --url="https://${PANEL_DOMAIN}" \
-  --timezone="$TIMEZONE" \
-  --cache=file \
-  --session=database \
-  --queue=database \
-  --disable-settings-ui=yes
+# ---------- Auto configure .env ---------- #
+sed -i "s|APP_URL=.*|APP_URL=https://$PANEL_DOMAIN|" .env
+sed -i "s|DB_HOST=.*|DB_HOST=127.0.0.1|" .env
+sed -i "s|DB_PORT=.*|DB_PORT=3306|" .env
+sed -i "s|DB_DATABASE=.*|DB_DATABASE=$DB_NAME|" .env
+sed -i "s|DB_USERNAME=.*|DB_USERNAME=$DB_USER|" .env
+sed -i "s|DB_PASSWORD=.*|DB_PASSWORD=$DB_PASS|" .env
+sed -i "s|APP_TIMEZONE=.*|APP_TIMEZONE=$TIMEZONE|" .env
+sed -i "s|QUEUE_CONNECTION=.*|QUEUE_CONNECTION=redis|" .env
+sed -i "s|SESSION_DRIVER=.*|SESSION_DRIVER=redis|" .env
 
-php artisan p:environment:database \
-  --host=127.0.0.1 \
-  --port=3306 \
-  --database=panel \
-  --username=pterodactyl \
-  --password="${DB_PASS}"
+# ---------- Composer Install ---------- #
+echo "* Installing Composer dependencies..."
+curl -sS https://getcomposer.org/installer | php
+mv composer.phar /usr/local/bin/composer
+composer install --no-dev --optimize-autoloader --no-interaction >> $LOG_PATH 2>&1
 
-php artisan p:environment:mail \
-  --driver=mail \
-  --host=127.0.0.1 \
-  --port=25 \
-  --from=admin@${PANEL_DOMAIN} \
-  --from-name="Pterodactyl Panel"
+# ---------- Database Migrate ---------- #
+echo "* Migrating database..."
+php artisan migrate --seed --force >> $LOG_PATH 2>&1
 
-php artisan migrate --seed --force
+# ---------- Create Admin User ---------- #
+echo "* Creating admin user..."
 php artisan p:user:make \
-  --email="$ADMIN_EMAIL" \
-  --username="$ADMIN_USER" \
-  --name-first="Admin" \
-  --name-last="User" \
-  --password="$ADMIN_PASS" \
-  --admin=1
+    --email="$EMAIL" \
+    --username="admin" \
+    --name-first="Panel" \
+    --name-last="Admin" \
+    --password="Admin1234" \
+    --admin=1 >> $LOG_PATH 2>&1
 
-# ---------- PERMISSION ----------
+# ---------- Setup Permissions ---------- #
 chown -R www-data:www-data /var/www/pterodactyl
-chmod -R 755 /var/www/pterodactyl
+chmod -R 755 /var/www/pterodactyl/*
 
-# ---------- KONFIG NGINX ----------
-cat >/etc/nginx/sites-available/pterodactyl.conf <<EOF
+# ---------- Setup Nginx ---------- #
+echo "* Setting up Nginx..."
+cat > /etc/nginx/sites-available/pterodactyl.conf <<EOF
 server {
     listen 80;
-    server_name ${PANEL_DOMAIN};
+    server_name $PANEL_DOMAIN;
 
     root /var/www/pterodactyl/public;
     index index.php;
 
-    access_log /var/log/nginx/pterodactyl_access.log;
-    error_log  /var/log/nginx/pterodactyl_error.log error;
+    access_log /var/log/nginx/pterodactyl.access.log;
+    error_log /var/log/nginx/pterodactyl.error.log;
 
     location / {
         try_files \$uri \$uri/ /index.php?\$query_string;
     }
 
-    location ~ \.php$ {
-        include snippets/fastcgi-php.conf;
-        fastcgi_pass unix:/var/run/php/php8.2-fpm.sock;
-        fastcgi_param SCRIPT_FILENAME \$realpath_root\$fastcgi_script_name;
+    location ~ \.php\$ {
+        fastcgi_split_path_info ^(.+\.php)(/.+)\$;
+        fastcgi_pass unix:/run/php/php8.1-fpm.sock;
+        fastcgi_index index.php;
         include fastcgi_params;
+        fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
+        fastcgi_param HTTP_PROXY "";
+        fastcgi_intercept_errors off;
+        fastcgi_buffer_size 16k;
+        fastcgi_buffers 4 16k;
     }
 
     location ~ /\.ht {
@@ -146,53 +124,41 @@ server {
 }
 EOF
 
-ln -sf /etc/nginx/sites-available/pterodactyl.conf /etc/nginx/sites-enabled/
-nginx -t && systemctl reload nginx
+ln -sf /etc/nginx/sites-available/pterodactyl.conf /etc/nginx/sites-enabled/pterodactyl.conf
+nginx -t && systemctl restart nginx
 
-# ---------- SSL ----------
-apt install -y certbot python3-certbot-nginx
-certbot --nginx -d "$PANEL_DOMAIN" --non-interactive --agree-tos -m "$ADMIN_EMAIL"
+# ---------- SSL Auto Install ---------- #
+echo "* Installing SSL certificate..."
+certbot --nginx -d "$PANEL_DOMAIN" --agree-tos -m "$EMAIL" --non-interactive --redirect >> $LOG_PATH 2>&1 || true
 
-# ---------- DOCKER & WINGS ----------
-curl -fsSL https://get.docker.com | bash
-systemctl enable --now docker
-
-curl -Lo /usr/local/bin/wings https://github.com/pterodactyl/wings/releases/latest/download/wings_linux_amd64
-chmod +x /usr/local/bin/wings
-useradd -r -m -d /etc/pterodactyl -s /bin/false pterodactyl
-mkdir -p /etc/pterodactyl /var/lib/pterodactyl /var/log/pterodactyl
-
-cat >/etc/systemd/system/wings.service <<EOF
+# ---------- Queue & Cron Setup ---------- #
+echo "* Setting up queue worker..."
+cat > /etc/systemd/system/pteroq.service <<EOF
 [Unit]
-Description=Pterodactyl Wings Daemon
-After=docker.service
-Requires=docker.service
+Description=Pterodactyl Queue Worker
+After=redis-server.service
 
 [Service]
-User=root
-WorkingDirectory=/etc/pterodactyl
-LimitNOFILE=4096
-PIDFile=/var/run/wings.pid
-ExecStart=/usr/local/bin/wings
-Restart=on-failure
-StartLimitInterval=600
-StartLimitBurst=5
+User=www-data
+Group=www-data
+Restart=always
+ExecStart=/usr/bin/php /var/www/pterodactyl/artisan queue:work --sleep=3 --tries=3
+StartLimitInterval=0
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-systemctl daemon-reload
-systemctl enable wings
-systemctl start wings
+systemctl enable --now pteroq
+systemctl restart nginx php8.1-fpm redis-server
 
-# ---------- SELESAI ----------
+# ---------- Done ---------- #
 echo ""
-echo "=============================================="
-echo "✅ Instalasi Pterodactyl Panel Selesai!"
-echo "Panel URL   : https://${PANEL_DOMAIN}"
-echo "Login Email : ${ADMIN_EMAIL}"
-echo "Password    : ${ADMIN_PASS}"
-echo "Database PW : ${DB_PASS}"
-echo "=============================================="
-echo ""
+echo "==============================================="
+echo "✅ Pterodactyl Panel Installed Successfully!"
+echo "==============================================="
+echo "URL     : https://$PANEL_DOMAIN"
+echo "Email   : $EMAIL"
+echo "Password: Admin1234"
+echo "DB Name : $DB_NAME"
+echo "==============================================="
