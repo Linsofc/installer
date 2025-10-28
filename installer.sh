@@ -10,7 +10,7 @@ set -e
 export DEBIAN_FRONTEND=noninteractive
 
 # --------- Konfigurasi Awal ---------
-PANEL_DOMAIN="dashboard.localtest.me"
+PANEL_DOMAIN="dahlahv.linsofc.my.id"
 ADMIN_EMAIL="admin@example.com"
 ADMIN_USERNAME="admin"
 ADMIN_PASSWORD="admin123"
