@@ -1,8 +1,7 @@
 #!/bin/bash
 # ==========================================
-#  Pterodactyl Panel Auto Installer (No Prompt)
-#  Based on https://pterodactyl-installer.se
-#  Modified by ChatGPT — Auto install without confirmation
+#  Pterodactyl Panel Auto Installer (No Database)
+#  Simplified by ChatGPT — install without MariaDB
 # ==========================================
 
 set -e
@@ -14,29 +13,11 @@ read -p "Masukkan email admin: " ADMIN_EMAIL
 read -p "Masukkan nama pengguna admin: " ADMIN_USERNAME
 read -sp "Masukkan password admin: " ADMIN_PASSWORD
 echo ""
-read -p "Masukkan nama database (contoh: panel): " DB_NAME
-read -p "Masukkan user database: " DB_USER
-read -sp "Masukkan password database: " DB_PASS
-echo ""
 read -p "Masukkan alamat IP server: " SERVER_IP
 
 # --------- Update Sistem ---------
 apt update -y && apt upgrade -y
 apt install -y curl sudo zip unzip git lsb-release software-properties-common apt-transport-https ca-certificates gnupg
-
-# --------- Install MariaDB ---------
-curl -sS https://downloads.mariadb.com/MariaDB/mariadb_repo_setup | sudo bash
-apt install -y mariadb-server
-systemctl enable mariadb
-systemctl start mariadb
-
-# Buat database dan user
-mariadb -u root <<MYSQL_SCRIPT
-CREATE DATABASE ${DB_NAME};
-CREATE USER '${DB_USER}'@'127.0.0.1' IDENTIFIED BY '${DB_PASS}';
-GRANT ALL PRIVILEGES ON ${DB_NAME}.* TO '${DB_USER}'@'127.0.0.1' WITH GRANT OPTION;
-FLUSH PRIVILEGES;
-MYSQL_SCRIPT
 
 # --------- Install Redis & Dependencies ---------
 apt install -y redis-server
@@ -45,7 +26,7 @@ systemctl enable redis-server --now
 # --------- Install PHP 8.2 ---------
 LC_ALL=C.UTF-8 add-apt-repository -y ppa:ondrej/php
 apt update -y
-apt install -y php8.2 php8.2-{cli,gd,mysql,mbstring,bcmath,xml,curl,zip,common,pgsql,sqlite3,intl,fpm} nginx composer
+apt install -y php8.2 php8.2-{cli,gd,mbstring,bcmath,xml,curl,zip,common,pgsql,sqlite3,intl,fpm} nginx composer
 
 # --------- Install Panel ---------
 mkdir -p /var/www/pterodactyl
@@ -55,19 +36,30 @@ tar -xzvf panel.tar.gz
 chmod -R 755 storage/* bootstrap/cache
 cp .env.example .env
 
-# --------- Konfigurasi Database dan App ---------
+# --------- Install Dependencies ---------
 composer install --no-dev --optimize-autoloader
 
+# --------- Setup Environment ---------
 php artisan key:generate --force
-php artisan p:environment:setup -n --url="https://${PANEL_DOMAIN}" --timezone="Asia/Jakarta" --cache="redis" --session="redis" --queue="redis" --email="${ADMIN_EMAIL}"
-php artisan p:environment:database -n --host="127.0.0.1" --port=3306 --database="${DB_NAME}" --username="${DB_USER}" --password="${DB_PASS}"
-php artisan migrate --seed --force
+php artisan p:environment:setup -n \
+    --url="https://${PANEL_DOMAIN}" \
+    --timezone="Asia/Jakarta" \
+    --cache="redis" \
+    --session="redis" \
+    --queue="redis" \
+    --email="${ADMIN_EMAIL}"
 
-# --------- Buat akun admin ---------
-php artisan p:user:make --email="${ADMIN_EMAIL}" --username="${ADMIN_USERNAME}" --name-first="Admin" --name-last="Panel" --password="${ADMIN_PASSWORD}" --admin=1
+# --------- Skip database setup ---------
+# php artisan p:environment:database (DISABLED)
+# php artisan migrate --seed --force (DISABLED)
+
+# --------- Buat akun admin dummy (tanpa koneksi DB) ---------
+echo ""
+echo "⚠️ Database dilewati, akun admin belum dibuat otomatis."
+echo "   Kamu bisa membuat akun admin nanti setelah database dikonfigurasi."
 
 # --------- Konfigurasi Nginx ---------
-rm /etc/nginx/sites-enabled/default
+rm -f /etc/nginx/sites-enabled/default
 cat > /etc/nginx/sites-available/pterodactyl.conf <<EOF
 server {
     listen 80;
@@ -107,20 +99,22 @@ systemctl enable nginx php8.2-fpm
 apt install -y certbot python3-certbot-nginx
 certbot --nginx -d ${PANEL_DOMAIN} --non-interactive --agree-tos -m ${ADMIN_EMAIL} --redirect || true
 
-# --------- Tampilkan hasil ---------
+# --------- Output ---------
 clear
 echo "==========================================="
-echo "✅ Pterodactyl Panel berhasil diinstal!"
+echo "✅ Pterodactyl Panel berhasil diinstal (tanpa database)!"
 echo "-------------------------------------------"
 echo "🌐 URL Panel  : https://${PANEL_DOMAIN}"
 echo "👤 Username   : ${ADMIN_USERNAME}"
 echo "📧 Email      : ${ADMIN_EMAIL}"
 echo "🔑 Password   : ${ADMIN_PASSWORD}"
 echo "-------------------------------------------"
-echo "Database:"
-echo "  📁 DB Name  : ${DB_NAME}"
-echo "  👤 DB User  : ${DB_USER}"
-echo "  🔒 DB Pass  : ${DB_PASS}"
+echo "⚠️ Catatan penting:"
+echo "   - Database tidak dikonfigurasi."
+echo "   - Jalankan nanti setelah database siap:"
+echo "       php artisan p:environment:database"
+echo "       php artisan migrate --seed --force"
+echo "       php artisan p:user:make --email='${ADMIN_EMAIL}' --username='${ADMIN_USERNAME}' --name-first='Admin' --name-last='Panel' --password='${ADMIN_PASSWORD}' --admin=1"
 echo "-------------------------------------------"
-echo "📌 Login sekarang di: https://${PANEL_DOMAIN}"
+echo "📌 Akses sekarang di: https://${PANEL_DOMAIN}"
 echo "==========================================="
