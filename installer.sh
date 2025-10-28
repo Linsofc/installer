@@ -1,14 +1,13 @@
 #!/bin/bash
 # ==========================================
-#  Pterodactyl Full Auto Installer
-#  Author: Modified by ChatGPT (based on Vilhelm Prytz)
-#  Auto input version — Ubuntu/Debian
+#  Pterodactyl Full Auto Installer (Stable)
+#  Modified & Improved by ChatGPT (Saiful Edition)
+#  Supports Ubuntu 20.04 / 22.04 / Debian 12
 # ==========================================
 
 set -e
 export DEBIAN_FRONTEND=noninteractive
 
-# ---------- INPUT AWAL ----------
 echo "=== PTERODACTYL AUTO INSTALLER ==="
 read -p "Masukkan domain panel (contoh: dashboard.linsofc.my.id): " PANEL_DOMAIN
 read -p "Masukkan email admin panel: " ADMIN_EMAIL
@@ -30,15 +29,14 @@ apt install -y curl wget sudo unzip zip git gnupg software-properties-common ca-
 
 # ---------- INSTALL NGINX, MARIADB, PHP ----------
 apt install -y nginx mariadb-server mariadb-client
+systemctl enable --now mariadb
+systemctl enable --now nginx
 
 echo "Mengatur password root MariaDB..."
 mysql -u root <<MYSQL_SCRIPT
 ALTER USER 'root'@'localhost' IDENTIFIED BY '${MYSQL_ROOT_PASS}';
 FLUSH PRIVILEGES;
 MYSQL_SCRIPT
-
-systemctl enable --now mariadb
-systemctl enable --now nginx
 
 # ---------- INSTALL PHP 8.2 ----------
 LC_ALL=C.UTF-8 add-apt-repository -y ppa:ondrej/php
@@ -47,14 +45,28 @@ apt install -y php8.2 php8.2-{cli,gd,mysql,mbstring,xml,bcmath,zip,curl,pgsql,in
 
 # ---------- DOWNLOAD PANEL ----------
 cd /var/www/
-curl -Lo panel.tar.gz https://github.com/pterodactyl/panel/releases/latest/download/panel.tar.gz
+echo "Mengunduh Pterodactyl Panel..."
+rm -rf /var/www/pterodactyl
 mkdir -p /var/www/pterodactyl
+curl -Lo panel.tar.gz https://github.com/pterodactyl/panel/releases/latest/download/panel.tar.gz
 tar -xzvf panel.tar.gz -C /var/www/pterodactyl --strip-components=1
 cd /var/www/pterodactyl
+
+# ---------- CEK & PERBAIKI .env.example ----------
+if [ ! -f ".env.example" ]; then
+  echo "[FIX] File .env.example tidak ditemukan, mengunduh ulang..."
+  cd /var/www
+  rm -rf pterodactyl
+  mkdir -p pterodactyl
+  curl -Lo panel.tar.gz https://github.com/pterodactyl/panel/releases/latest/download/panel.tar.gz
+  tar -xzvf panel.tar.gz -C /var/www/pterodactyl --strip-components=1
+  cd /var/www/pterodactyl
+fi
 
 # ---------- INSTALL COMPOSER ----------
 curl -sS https://getcomposer.org/installer | php
 mv composer.phar /usr/local/bin/composer
+composer install --no-dev --optimize-autoloader
 
 # ---------- SETUP DATABASE PANEL ----------
 DB_PASS=$(openssl rand -hex 16)
@@ -67,17 +79,15 @@ MYSQL_SCRIPT
 
 # ---------- ENV SETUP ----------
 cp .env.example .env
-composer install --no-dev --optimize-autoloader
-
 php artisan key:generate --force
 
 php artisan p:environment:setup \
   --author="$ADMIN_EMAIL" \
   --url="https://${PANEL_DOMAIN}" \
   --timezone="$TIMEZONE" \
-  --cache=redis \
-  --session=redis \
-  --queue=redis \
+  --cache=file \
+  --session=database \
+  --queue=database \
   --disable-settings-ui=yes
 
 php artisan p:environment:database \
@@ -88,20 +98,24 @@ php artisan p:environment:database \
   --password="${DB_PASS}"
 
 php artisan p:environment:mail \
-  --driver=smtp \
-  --host=mail.example.com \
-  --port=587 \
-  --username=mail@example.com \
-  --password=password123 \
-  --from=admin@$PANEL_DOMAIN \
-  --from-name="Pterodactyl"
+  --driver=mail \
+  --host=127.0.0.1 \
+  --port=25 \
+  --from=admin@${PANEL_DOMAIN} \
+  --from-name="Pterodactyl Panel"
 
 php artisan migrate --seed --force
-php artisan p:user:make --email="$ADMIN_EMAIL" --username="$ADMIN_USER" --name-first="Admin" --name-last="User" --password="$ADMIN_PASS" --admin=1
+php artisan p:user:make \
+  --email="$ADMIN_EMAIL" \
+  --username="$ADMIN_USER" \
+  --name-first="Admin" \
+  --name-last="User" \
+  --password="$ADMIN_PASS" \
+  --admin=1
 
 # ---------- PERMISSION ----------
-chown -R www-data:www-data /var/www/pterodactyl/*
-chmod -R 755 /var/www/pterodactyl/*
+chown -R www-data:www-data /var/www/pterodactyl
+chmod -R 755 /var/www/pterodactyl
 
 # ---------- KONFIG NGINX ----------
 cat >/etc/nginx/sites-available/pterodactyl.conf <<EOF
@@ -135,11 +149,14 @@ EOF
 ln -sf /etc/nginx/sites-available/pterodactyl.conf /etc/nginx/sites-enabled/
 nginx -t && systemctl reload nginx
 
-# ---------- INSTALL LET'S ENCRYPT ----------
+# ---------- SSL ----------
 apt install -y certbot python3-certbot-nginx
 certbot --nginx -d "$PANEL_DOMAIN" --non-interactive --agree-tos -m "$ADMIN_EMAIL"
 
-# ---------- INSTALL WINGS ----------
+# ---------- DOCKER & WINGS ----------
+curl -fsSL https://get.docker.com | bash
+systemctl enable --now docker
+
 curl -Lo /usr/local/bin/wings https://github.com/pterodactyl/wings/releases/latest/download/wings_linux_amd64
 chmod +x /usr/local/bin/wings
 useradd -r -m -d /etc/pterodactyl -s /bin/false pterodactyl
@@ -167,19 +184,15 @@ EOF
 
 systemctl daemon-reload
 systemctl enable wings
-
-# ---------- DOCKER INSTALL ----------
-curl -fsSL https://get.docker.com | bash
-systemctl enable --now docker
 systemctl start wings
 
 # ---------- SELESAI ----------
 echo ""
 echo "=============================================="
 echo "✅ Instalasi Pterodactyl Panel Selesai!"
-echo "Panel: https://${PANEL_DOMAIN}"
-echo "Login Admin: ${ADMIN_EMAIL}"
-echo "Password: ${ADMIN_PASS}"
-echo "Database Password: ${DB_PASS}"
+echo "Panel URL   : https://${PANEL_DOMAIN}"
+echo "Login Email : ${ADMIN_EMAIL}"
+echo "Password    : ${ADMIN_PASS}"
+echo "Database PW : ${DB_PASS}"
 echo "=============================================="
 echo ""
